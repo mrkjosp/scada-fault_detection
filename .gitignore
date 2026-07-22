@@ -1,0 +1,32 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Data & model artifacts
+training_data/
+*.csv
+models/*.joblib
+models/metrics_summary.json
+data/                       # real datasets (e.g. CWRU .mat) — download locally
+
+# Generated edge model header (regenerate via scripts/export_to_c.py)
+edge_firmware/include/motor_health_model.h
+
+# Build artifacts
+*.o
+edge_firmware/bench/host_bench
+
+# Generated plots in models/ are scratch; the KEEPER plots live in docs/results/
+models/*.png
+
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

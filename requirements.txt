@@ -1,0 +1,15 @@
+# Pinned for reproducibility. Adjust to versions you validate locally.
+streamlit==1.31.0
+plotly==5.18.0
+pandas==2.1.4
+numpy==1.26.3
+requests==2.31.0
+influxdb-client==1.40.0
+scikit-learn==1.3.2
+joblib==1.3.2
+flask==3.0.0
+paho-mqtt==2.1.0
+python-dotenv==1.0.1
+matplotlib==3.8.2
+pytest==8.0.0
+# Edge export (optional): pip install micromlgen
