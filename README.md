@@ -85,8 +85,8 @@ Figures above are on physics-simulated data, not field data. Feature
 importance leans on vibration RMS and kurtosis for bearing faults,
 consistent with the underlying physics.
 
-![Motor health confusion matrix](docs/results/cm_grid.png)
-![Motor health feature importance](docs/results/fi_grid.png)
+![Motor health confusion matrix](docs/diagrams/cm_grid.png)
+![Motor health feature importance](docs/diagrams/fi_grid.png)
 
 **CWRU real-data: 97% accuracy, 0.97 macro-F1.** Cross-load test — trained
 on HP loads 0/1/2, tested on an entirely unseen HP 3 (stronger than a
