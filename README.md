@@ -8,6 +8,8 @@ vibration gauges. The motor path also runs on physical ESP32/FreeRTOS
 hardware with on-device inference, tested against a live compressor
 (fault-detection accuracy is validated separately — see "Edge-AI variant").
 
+![Dashboard](docs/diagrams/dashboard.png)
+
 **Highlights:**
 - **97% accuracy, 0.97 macro-F1** on real CWRU bearing data, cross-load test
   (trained on 0/1/2 HP, tested on unseen 3 HP)
@@ -19,7 +21,7 @@ hardware with on-device inference, tested against a live compressor
 
 ## Architecture
 
-![Architecture](docs/diagrams/architecture.png)
+<img src="docs/diagrams/architecture.png" width="75%">
 
 Models train offline, export to C, and run inference inside a FreeRTOS task
 on the edge node. Verdicts publish over MQTT with a CRC32 check and land in
@@ -85,8 +87,7 @@ Figures above are on physics-simulated data, not field data. Feature
 importance leans on vibration RMS and kurtosis for bearing faults,
 consistent with the underlying physics.
 
-![Motor health confusion matrix](docs/diagrams/cm_grid.png)
-![Motor health feature importance](docs/diagrams/fi_grid.png)
+<img src="docs/diagrams/fi_grid.png" width="75%">
 
 **CWRU real-data: 97% accuracy, 0.97 macro-F1.** Cross-load test — trained
 on HP loads 0/1/2, tested on an entirely unseen HP 3 (stronger than a
@@ -100,6 +101,9 @@ against file/load leakage before training.
 | inner_race | 0.96 | 0.98 | 0.97 | 471 |
 | normal | 1.00 | 1.00 | 1.00 | 473 |
 | outer_race | 1.00 | 0.95 | 0.97 | 825 |
+
+
+![Dashboard](docs/diagrams/compressor_dashboard.png)
 
 ## Quickstart
 
@@ -169,7 +173,7 @@ latency/footprint numbers on any machine, no hardware required — see
 [`edge_firmware/docs/MEASUREMENTS.md`](edge_firmware/docs/MEASUREMENTS.md).
 
 
-![Wiring](docs/diagrams/wiring.png)
+<img src="docs/diagrams/wiring.png" width="75%">
 
 ## Repository layout
 
