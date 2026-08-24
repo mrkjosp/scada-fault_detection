@@ -19,6 +19,28 @@ except ImportError:
 MACHINE_NAMES = ["motor", "pump", "compressor"]
 CLASSIFIER_NAMES = ["health", "faulttype", "sensorhealth"]
 
+def normalize_machine_id(raw_id: str) -> str:
+    """Map a raw machine_id to the short key used by I_RATED/MACHINES/models.
+
+    The simulator (and presumably real edge-node telemetry, since it uses the
+    same schema) emits suffixed ids like "motor_1", "pump_2", "compressor_3"
+    in simulator/generate_data.py.
+    Everywhere else (I_RATED, MACHINE_NAMES, MACHINES, the *_model.joblib
+    filenames) keys off the short form ("motor").
+    Raises ValueError for anything unrecognized -- a wrong machine_id should
+    fail loudly, not silently normalize against a default that quietly
+    produces a wrong feature vector.
+    """
+    if raw_id in MACHINE_NAMES:
+        return raw_id
+    for name in MACHINE_NAMES:
+        if raw_id.startswith(name + "_"):
+            return name
+    raise ValueError(
+        f"Unrecognized machine_id {raw_id!r}; expected one of {MACHINE_NAMES} "
+        f"or a suffixed form like 'motor_1'."
+    )
+    
 # rated current (A) per datasheet - used to normalize current_A into a feature
 I_RATED = {"motor": 15.2, "pump": 28.0, "compressor": 42.0}
 
