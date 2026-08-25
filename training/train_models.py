@@ -51,7 +51,7 @@ def sanitize(frame: pd.DataFrame) -> pd.DataFrame:
     so the model never sees junk. Deliberately does NOT touch label columns
     or chunk_id.
     """
-    label_cols = ["machine_state", "fault_type", "sensor_health", "chunk_id"]
+    label_cols = ["machine_state", "fault_type", "sensor_health", "chunk_id", "run_id"]
     bad = frame[label_cols].isna().any(axis=1)
     if bad.any():
         raise ValueError(
@@ -89,7 +89,7 @@ def main(data_dir: str, out_dir: str, make_plots: bool):
     for machine in MACHINE_NAMES:
         mdf = sanitize(df[df["machine"] == machine].copy())
         X = mdf[FEATURE_ORDER].values
-        groups = mdf["chunk_id"].values
+        groups = mdf["run_id"].values
 
         for clf_name, target_col in CLASSIFIERS.items():
             y = mdf[target_col].values
@@ -167,11 +167,61 @@ def _save_importance(key, clf, out_dir):
     fig.savefig(os.path.join(out_dir, f"fi_{key}.png"), dpi=110)
     plt.close(fig)
 
+def run_generalization_check(models_dir: str, seed: int, rows: int, n_runs: int):
+    """Regenerate a completely fresh dataset (different seed = different
+    random draws throughout, not just a different held-out slice) and score
+    the saved models against 100% of it."""
+    import joblib
+    from sklearn.metrics import classification_report
+    from simulator.generate_data import MACHINE_SPECS, generate_training_data
+
+    np.random.seed(seed)
+    print(f"\n{'='*60}\nGENERALIZATION CHECK  fresh seed={seed}, {rows} rows/machine, "
+          f"{n_runs} independent runs/class\n{' '*60}")
+
+    results = {}
+    for machine in MACHINE_NAMES:
+        sim_cls, faults = MACHINE_SPECS[machine]
+        sim = sim_cls()
+        fdf = generate_training_data(sim, faults, total_rows=rows, n_runs_per_class=n_runs)
+        fdf["machine"] = machine
+        fdf = engineer_features(fdf)
+        f32max = np.finfo(np.float32).max
+        fdf[FEATURE_ORDER] = (fdf[FEATURE_ORDER].replace([np.inf, -np.inf], np.nan)
+                               .fillna(0).clip(lower=-f32max, upper=f32max))
+        X = fdf[FEATURE_ORDER].values
+
+        for clf_name, target_col in CLASSIFIERS.items():
+            y = fdf[target_col].values
+            key = f"{machine}_{clf_name}"
+            model_path = os.path.join(models_dir, f"{key}_model.joblib")
+            if not os.path.exists(model_path):
+                print(f"  [!] {model_path} not found, skipping {key}")
+                continue
+            clf = joblib.load(model_path)
+            y_pred = clf.predict(X)
+            rep = classification_report(y, y_pred, output_dict=True, zero_division=0)
+            results[key] = {"accuracy": rep["accuracy"], "macro_f1": rep["macro avg"]["f1-score"]}
+            print(f"  {key:28s} acc={rep['accuracy']:.3f}  macro_f1={rep['macro avg']['f1-score']:.3f}")
+
+    out_path = os.path.join(models_dir, f"generalization_check_seed{seed}.json")
+    with open(out_path, "w") as f:
+        json.dump(results, f, indent=2)
+    print(f"\nSaved -> {out_path}")
+    return results
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--data-dir", default="training_data")
     p.add_argument("--out-dir", default="models")
     p.add_argument("--no-plots", action="store_true")
+    p.add_argument("--check-seed", type=int, default=None,
+                    help="if set, after training, regenerate a fresh dataset with THIS "
+                         "seed (must differ from whatever seed made data-dir) and score "
+                         "the saved models against all of it.")
+    p.add_argument("--check-rows", type=int, default=8000)
+    p.add_argument("--check-n-runs", type=int, default=6)
     args = p.parse_args()
     main(args.data_dir, args.out_dir, make_plots=not args.no_plots)
+    if args.check_seed is not None:
+        run_generalization_check(args.out_dir, args.check_seed, args.check_rows, args.check_n_runs)
