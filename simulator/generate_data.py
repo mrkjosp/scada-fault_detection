@@ -1090,7 +1090,7 @@ class ReciprocatingCompressorSimulator:
         }
 
 
-def generate_training_data(simulator, machine_faults: list, total_rows: int = 50000) -> pd.DataFrame:
+def generate_training_data(simulator, machine_faults: list, total_rows: int = 50000, n_runs_per_class: int = 6) -> pd.DataFrame:
     """
     Generate physics-based training data with controlled fault distribution.
 
@@ -1119,6 +1119,7 @@ def generate_training_data(simulator, machine_faults: list, total_rows: int = 50
             data = step_fn(i)
             data["chunk_id"] = sid * 1_000_000 + (i // chunk_size)
             all_rows.append(data)
+        return sid   
 
     rows_normal = int(total_rows * config['normal_fraction'])
     rows_early = int(total_rows * config['early_fault_fraction'])
@@ -1135,109 +1136,119 @@ def generate_training_data(simulator, machine_faults: list, total_rows: int = 50
 
     # -- 1. Normal operation data --
     print("\n  [1/4] Generating normal operation data...")
-    simulator.__init__()
-    simulator.set_fault("none", 0)
-    simulator.set_sensor_fault("none", "none")
+    n_normal_runs = max(2, n_runs_per_class // 2)
+    rows_per_normal_run = max(1, rows_normal // n_normal_runs)
+    for _ in range(n_normal_runs):
+        simulator.__init__()
+        simulator.set_fault("none", 0)
+        simulator.set_sensor_fault("none", "none")
 
-    def normal_step(i):
-        load = 60 + 30 * np.sin(2 * np.pi * i / 3600) + np.random.uniform(-5, 5)
-        load = max(30, min(110, load))
-        ambient = 25 + 5 * np.sin(2 * np.pi * i / 86400) + np.random.uniform(-1, 1)
-        return simulator.step(load_pct=load, ambient_temp=ambient)
+        def normal_step(i):
+            load = 60 + 30 * np.sin(2 * np.pi * i / 3600) + np.random.uniform(-5, 5)
+            load = max(30, min(110, load))
+            ambient = 25 + 5 * np.sin(2 * np.pi * i / 86400) + np.random.uniform(-1, 1)
+            return simulator.step(load_pct=load, ambient_temp=ambient)
 
-    run_segment(normal_step, rows_normal)
+        run_segment(normal_step, rows_per_normal_run)
 
     # -- 2. Early fault data --
     print("  [2/4] Generating early fault data...")
     rows_per_fault = rows_early // len(machine_faults)
+    rows_per_run = max(1, rows_per_fault // n_runs_per_class)
 
     for fault_name in machine_faults:
-        simulator.__init__()
-        simulator.set_fault(fault_name, 1)  # Stage 1 (early)
-        simulator.set_sensor_fault("none", "none")
+        for _ in range(n_runs_per_class):
+            simulator.__init__()
+            simulator.set_fault(fault_name, 1)
+            simulator.set_sensor_fault("none", "none")
+            for _ in range(200):
+                simulator.step(load_pct=75.0, ambient_temp=25.0)
 
-        for _ in range(200):  # let temperature stabilize; discarded
-            simulator.step(load_pct=75.0, ambient_temp=25.0)
+            def early_step(i):
+                load = 60 + 30 * np.sin(2 * np.pi * i / 1800) + np.random.uniform(-5, 5)
+                load = max(30, min(110, load))
+                ambient = 25 + np.random.uniform(-2, 2)
+                return simulator.step(load_pct=load, ambient_temp=ambient)
 
-        def early_step(i):
-            load = 60 + 30 * np.sin(2 * np.pi * i / 1800) + np.random.uniform(-5, 5)
-            load = max(30, min(110, load))
-            ambient = 25 + np.random.uniform(-2, 2)
-            return simulator.step(load_pct=load, ambient_temp=ambient)
-
-        run_segment(early_step, rows_per_fault)
-        print(f"    Early {fault_name}: {rows_per_fault} rows")
+            run_segment(early_step, rows_per_run)
+        print(f"    Early {fault_name}: {rows_per_run * n_runs_per_class} rows "
+              f"across {n_runs_per_class} independent runs")
 
     # -- 3. Critical fault data (stage 2 then stage 3, one continuous run) --
     print("  [3/4] Generating critical fault data...")
     rows_per_fault_crit = rows_critical // len(machine_faults)
-    half = rows_per_fault_crit // 2
+    rows_per_run_crit = max(2, rows_per_fault_crit // n_runs_per_class)
+    half = max(1, rows_per_run_crit // 2)
+
+    def crit_stage_step(i, load_center, load_amp, period):
+        load = load_center + load_amp * np.sin(2 * np.pi * i / period) + np.random.uniform(-3, 3)
+        load = max(30, min(110, load))
+        ambient = 25 + np.random.uniform(-2, 2)
+        return simulator.step(load_pct=load, ambient_temp=ambient)
 
     for fault_name in machine_faults:
-        simulator.__init__()
-        simulator.set_fault(fault_name, 2)  # Stage 2 (mid)
-        simulator.set_sensor_fault("none", "none")
-        for _ in range(200):
-            simulator.step(load_pct=80.0, ambient_temp=25.0)
+        for _ in range(n_runs_per_class):
+            simulator.__init__()
+            simulator.set_fault(fault_name, 2)
+            simulator.set_sensor_fault("none", "none")
+            for _ in range(200):
+                simulator.step(load_pct=80.0, ambient_temp=25.0)
 
-        sid = segment_id[0]
-        segment_id[0] += 1
+            sid = segment_id[0]
+            segment_id[0] += 1
 
-        def crit_stage_step(i, load_center, load_amp, period):
-            load = load_center + load_amp * np.sin(2 * np.pi * i / period) + np.random.uniform(-3, 3)
-            load = max(30, min(110, load))
-            ambient = 25 + np.random.uniform(-2, 2)
-            return simulator.step(load_pct=load, ambient_temp=ambient)
+            for i in range(half):
+                data = crit_stage_step(i, 70, 20, 1200)
+                data["run_id"] = sid
+                data["chunk_id"] = sid * 1_000_000 + (i // chunk_size)
+                all_rows.append(data)
 
-        for i in range(half):
-            data = crit_stage_step(i, 70, 20, 1200)
-            data["chunk_id"] = sid * 1_000_000 + (i // chunk_size)
-            all_rows.append(data)
+            simulator.set_fault(fault_name, 3)
+            for _ in range(200):
+                simulator.step(load_pct=85.0, ambient_temp=25.0)
 
-        simulator.set_fault(fault_name, 3)  # Stage 3 (critical) — same run
-        for _ in range(200):
-            simulator.step(load_pct=85.0, ambient_temp=25.0)
+            for i in range(half):
+                data = crit_stage_step(i, 75, 15, 900)
+                data["run_id"] = sid
+                data["chunk_id"] = sid * 1_000_000 + ((half + i) // chunk_size)
+                all_rows.append(data)
 
-        for i in range(half):
-            data = crit_stage_step(i, 75, 15, 900)
-            data["chunk_id"] = sid * 1_000_000 + ((half + i) // chunk_size)
-            all_rows.append(data)
-
-        print(f"    Critical {fault_name}: {rows_per_fault_crit} rows")
+        print(f"    Critical {fault_name}: {half * 2 * n_runs_per_class} rows "
+              f"across {n_runs_per_class} independent runs")
 
     # -- 4. Sensor fault data --
     print("  [4/4] Generating sensor fault data...")
     sensor_targets = ["current", "temperature", "vibration"]
     sensor_fault_types = ["stuck_value", "drift", "spike", "out_of_range", "noise_flood"]
-
-    rows_per_combo = rows_sensor // (len(sensor_targets) * len(sensor_fault_types))
-    # Floor only prevents a *zero-row* class (unlearnable), not a small one.
-
-    if rows_per_combo < 10:
+    n_combos = len(sensor_targets) * len(sensor_fault_types)
+    rows_per_combo = rows_sensor // n_combos
+    rows_per_combo_run = max(1, rows_per_combo // n_runs_per_class)
+    if rows_per_combo_run * n_runs_per_class < 10:
         print(f"    [!] --rows too small for the configured sensor_fraction "
-              f"({rows_per_combo}/combo requested); flooring to 10/combo, "
-             f"which will overshoot SIM_CONFIG['sensor_fault_fraction'].")
-        rows_per_combo = 10
+              f"({rows_per_combo} rows/combo requested over {n_runs_per_class} runs); "
+              f"flooring to 2/run.")
+        rows_per_combo_run = max(rows_per_combo_run, 2)
 
     for target in sensor_targets:
         for sfault in sensor_fault_types:
-            simulator.__init__()
-            simulator.set_fault("none", 0)  # machine itself is healthy
-            simulator.set_sensor_fault(sfault, target)
+            for _ in range(n_runs_per_class):
+                simulator.__init__()
+                simulator.set_fault("none", 0)
+                simulator.set_sensor_fault(sfault, target)
+                for _ in range(100):
+                    simulator.step(load_pct=75.0, ambient_temp=25.0)
 
-            for _ in range(100):
-                simulator.step(load_pct=75.0, ambient_temp=25.0)
+                def sensor_step(i):
+                    load = 70 + 20 * np.sin(2 * np.pi * i / 600) + np.random.uniform(-3, 3)
+                    load = max(30, min(110, load))
+                    ambient = 25 + np.random.uniform(-1, 1)
+                    return simulator.step(load_pct=load, ambient_temp=ambient)
 
-            def sensor_step(i):
-                load = 70 + 20 * np.sin(2 * np.pi * i / 600) + np.random.uniform(-3, 3)
-                load = max(30, min(110, load))
-                ambient = 25 + np.random.uniform(-1, 1)
-                return simulator.step(load_pct=load, ambient_temp=ambient)
+                run_segment(sensor_step, rows_per_combo_run)
+                simulator.set_sensor_fault("none", "none")
 
-            run_segment(sensor_step, rows_per_combo)
-            simulator.set_sensor_fault("none", "none")
-
-    print(f"    Sensor faults: {len(sensor_targets) * len(sensor_fault_types) * rows_per_combo} rows")
+    print(f"    Sensor faults: {n_combos * rows_per_combo_run * n_runs_per_class} rows "
+          f"across {n_runs_per_class} independent runs per combo")
 
     df = pd.DataFrame(all_rows)
     print(f"\n  Total rows generated: {len(df)}")
@@ -1261,6 +1272,7 @@ def main():
     p.add_argument("--rows", type=int, default=50000, help="rows per machine")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", default="training_data", help="output directory for CSVs")
+    p.add_argument("--n-runs", type=int, default=6,help="independent simulation runs per fault class")
     args = p.parse_args()
 
     np.random.seed(args.seed)
@@ -1273,7 +1285,7 @@ def main():
     summary = {}
     for machine, (sim_cls, faults) in MACHINE_SPECS.items():
         sim = sim_cls()
-        df = generate_training_data(sim, faults, total_rows=args.rows)
+        df = generate_training_data(sim, faults, total_rows=args.rows, n_runs_per_class=args.n_runs)
         out_path = os.path.join(args.out, f"{machine}_training_data.csv")
         df.to_csv(out_path, index=False)
         print(f"\n  Saved to: {out_path}")
